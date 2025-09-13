@@ -140,12 +140,56 @@ export default function ChatWithEditor() {
 
 // ---------------- Components ----------------
 function CodeEditor({ value, onChange, language }: { value: string; onChange: (v: string) => void; language: string }) {
+  // Try to load Monaco at runtime; fall back to textarea if it fails or isn't installed
+  const [Monaco, setMonaco] = React.useState<any>(null);
+  const [tried, setTried] = React.useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!tried) {
+      (async () => {
+        try {
+          // Dynamic import so local dev (with dep installed) gets Monaco, sandbox continues to work
+          const mod: any = await import(/* @vite-ignore */ "@monaco-editor/react");
+          if (mounted) setMonaco(() => mod.default || mod);
+        } catch {
+          // ignore; we'll use the textarea fallback
+        } finally {
+          if (mounted) setTried(true);
+        }
+      })();
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [tried]);
+
+  if (Monaco) {
+    return (
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Language: {language}</span>
+          <span className="text-xs text-neutral-500">Monaco editor</span>
+        </div>
+        <Monaco
+          height="45vh"
+          defaultLanguage={language || "typescript"}
+          language={language || "typescript"}
+          value={value}
+          onChange={(v: string | undefined) => onChange(v ?? "")}
+          options={{ fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false }}
+          theme="vs-dark"
+        />
+      </div>
+    );
+  }
+
   // Fallback textarea-based editor (no Monaco). Keeps controlled state.
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">Language: {language}</span>
-        <span className="text-xs text-neutral-500">Monaco disabled in this sandbox</span>
+        <span className="text-xs text-neutral-500">Monaco not installed — using fallback</span>
       </div>
       <textarea
         value={value}
