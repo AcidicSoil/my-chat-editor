@@ -20,6 +20,26 @@ export default function ChatWithEditor() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [diff, setDiff] = useState<string>("");
+  const [provider, setProvider] = useState("openai");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [selectedOllamaModel, setSelectedOllamaModel] = useState<string>("");
+
+  useEffect(() => {
+    async function fetchOllamaModels() {
+      try {
+        const response = await fetch("http://localhost:11434/api/tags");
+        const data = await response.json();
+        setOllamaModels(data.models.map((model: any) => model.name));
+        setSelectedOllamaModel(data.models[0]?.name || "");
+      } catch (error) {
+        console.error("Failed to fetch Ollama models:", error);
+      }
+    }
+
+    if (provider === "ollama") {
+      fetchOllamaModels();
+    }
+  }, [provider]);
 
   // --- Minimal chat that understands two "tool calls" locally ---
   async function onSend(e: React.FormEvent) {
@@ -50,9 +70,50 @@ export default function ChatWithEditor() {
       // not a tool call; fall through to echo
     }
 
-    // Echo demo assistant that can "explain" and offer actions
-    const reply = `You said: ${text}\nTry sending a tool call JSON to update the editor or show a diff.`;
-    append({ role: "assistant", content: reply });
+    // not a tool call; fall through to LLM
+
+    const body = {
+      messages: [...messages, { role: "user", content: text }],
+      ...(provider === "ollama" && { model: selectedOllamaModel }),
+    };
+
+    const response = await fetch(
+      provider === "openai" ? "/api/chat" : "/api/ollama",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+
+    let content = "";
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+
+      if (provider === "ollama") {
+        // Ollama streams NDJSON
+        const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+        for (const line of lines) {
+          const parsed = JSON.parse(line);
+          content += parsed.message.content;
+          setMessages((prev) => [
+            ...prev.slice(0, -1),
+            { role: "assistant", content },
+          ]);
+        }
+      } else {
+        // OpenAI streams text
+        content += chunk;
+        setMessages((prev) => [
+          ...prev.slice(0, -1),
+          { role: "assistant", content },
+        ]);
+      }
+    }
   }
 
   function append(m: Msg) {
@@ -103,6 +164,31 @@ export default function ChatWithEditor() {
           <button className="px-4 py-2 rounded-xl bg-black text-white">Send</button>
         </form>
         <SystemPrompt className="mt-2" />
+
+        <div className="flex items-center gap-4">
+          <label className="text-sm font-medium">Provider:</label>
+          <select
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+            className="border rounded-xl px-3 py-2 text-sm"
+          >
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+          </select>
+          {provider === "ollama" && (
+            <select
+              value={selectedOllamaModel}
+              onChange={(e) => setSelectedOllamaModel(e.target.value)}
+              className="border rounded-xl px-3 py-2 text-sm"
+            >
+              {ollamaModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         {/* Quick actions for demo */}
         <div className="flex gap-2">
